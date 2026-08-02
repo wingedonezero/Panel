@@ -1,0 +1,33 @@
+# Panel — example deployment.
+# Host access notes:
+#   network_mode: host  -> real NIC speeds (no port mapping; UI is at http://<host>:8763)
+#   pid: host           -> lets Panel read the host mount table for auto-discovery
+#   privileged + /dev   -> hdparm spin state + smartctl temps on raw disks
+# Everything is optional-degrade: no GPU -> no GPU panel, no storcli -> no HBA temp, etc.
+services:
+  panel:
+    image: ghcr.io/wingedonezero/panel:latest
+    container_name: panel
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    privileged: true
+    # runtime: nvidia               # uncomment for NVIDIA GPU stats
+    environment:
+      # - NVIDIA_VISIBLE_DEVICES=all            # with runtime: nvidia
+      # - NVIDIA_DRIVER_CAPABILITIES=utility    # with runtime: nvidia
+      - PANEL_TITLE=                # default: hostname
+      - PANEL_PORT=8763
+      - PANEL_IDLE_PAUSE=true      # stop all probing when no browser is watching
+      # - PANEL_IDLE_WINDOW=15
+      # - PANEL_DISKS=SERIAL1=disk1,SERIAL2=disk2   # cosmetic labels by serial
+      # - PANEL_HIDE_DISKS=SERIAL3
+      # - PANEL_POOLS=pool=/srv/mergerfs/pool       # default: auto-detect mergerfs
+      # - PANEL_STORCLI=/config/bin/storcli64       # LSI/Broadcom HBA temp (optional)
+      # - PANEL_NET_LAN_REGEX=^(eth|en|bond)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /dev:/dev
+      - /srv:/srv:ro                # so data-disk mountpoints resolve for usage bars
+      - /:/hostroot:ro              # fallback for mounts outside /srv (incl. root fs)
+      # - /path/to/storcli-bin:/config/bin:ro       # if using PANEL_STORCLI

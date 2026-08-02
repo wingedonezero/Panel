@@ -1,0 +1,134 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panel</title>
+<style>
+  :root { --bg:#1c1b22; --panel:#26252e; --row:#2d2c36; --text:#d8d8dc; --dim:#8a8a92;
+          --green:#57c22d; --grey:#5a5a64; --orange:#ff8c2e; --bar:#3b3a45; --accent:#e22828; }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--text); font:14px/1.45 -apple-system,'Segoe UI',Roboto,sans-serif; padding:18px; max-width:1100px; margin:0 auto; }
+  h1 { font-size:20px; letter-spacing:.5px; margin-bottom:2px; text-transform:uppercase; }
+  h1 b { color:var(--accent); }
+  .sub { color:var(--dim); font-size:12px; margin-bottom:16px; }
+  .panel { background:var(--panel); border-radius:8px; padding:14px 16px; margin-bottom:14px; }
+  .panel h2 { font-size:12px; text-transform:uppercase; letter-spacing:1px; color:var(--dim); margin-bottom:10px; }
+  table { width:100%; border-collapse:collapse; }
+  th { text-align:left; color:var(--dim); font-size:11px; text-transform:uppercase; padding:4px 8px; }
+  td { padding:6px 8px; background:var(--row); font-size:13px; }
+  tr td:first-child { border-radius:6px 0 0 6px; } tr td:last-child { border-radius:0 6px 6px 0; }
+  tbody tr { border-bottom:4px solid var(--panel); }
+  .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:8px; vertical-align:-1px; }
+  .dot.active { background:var(--green); box-shadow:0 0 6px var(--green); }
+  .dot.standby { background:var(--grey); }
+  .dot.unknown, .dot.q { background:var(--orange); }
+  .num { font-variant-numeric:tabular-nums; text-align:right; }
+  .speed { color:var(--green); } .wr { color:#ff9d45; }
+  .bar { background:var(--bar); border-radius:4px; height:14px; width:130px; position:relative; overflow:hidden; }
+  .bar i { position:absolute; inset:0 auto 0 0; background:linear-gradient(90deg,#2f8fdd,#57c22d); border-radius:4px; }
+  .bar.hot i { background:linear-gradient(90deg,#dd8f2f,#e22828); }
+  .bar span { position:absolute; inset:0; text-align:center; font-size:10px; line-height:14px; color:#fff; text-shadow:0 1px 2px #000; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:14px; }
+  .stat { display:flex; justify-content:space-between; padding:3px 0; font-size:13px; }
+  .stat b { font-variant-numeric:tabular-nums; font-weight:600; }
+  .cts { display:flex; flex-wrap:wrap; gap:6px; }
+  .ct { background:var(--row); border-radius:14px; padding:3px 12px 3px 8px; font-size:12px; }
+  .stale { opacity:.4; transition:opacity .5s; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<h1 id="title"><b>panel</b></h1>
+<div class="sub" id="updated">connecting…</div>
+
+<div class="panel">
+  <h2>Disks</h2>
+  <table id="disks"><thead><tr>
+    <th>Device</th><th>Temp</th><th class="num">Read</th><th class="num">Write</th><th>Usage</th><th class="num">Free</th>
+  </tr></thead><tbody></tbody></table>
+</div>
+
+<div class="grid">
+  <div class="panel"><h2>System</h2><div id="sys"></div></div>
+  <div class="panel hidden" id="gpuPanel"><h2 id="gpuTitle">GPU</h2><div id="gpu"></div></div>
+  <div class="panel"><h2>Network</h2><div id="net"></div></div>
+  <div class="panel"><h2>Temps &amp; Fans</h2><div id="temps"></div></div>
+</div>
+
+<div class="panel"><h2>Containers</h2><div class="cts" id="cts"></div></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const fmtB = n => { if(!n) return "0"; const u=["B","KB","MB","GB","TB"]; let i=0; while(n>=1024&&i<4){n/=1024;i++} return n.toFixed(n>=100?0:1)+" "+u[i]; };
+const fmtS = n => n < 51200 ? "" : fmtB(n)+"/s";   // treat sub-50KB/s as idle noise
+let titled = false;
+
+async function tick() {
+  try {
+    const r = await fetch("api/stats"); const d = await r.json();
+    if (!d.disks) return;
+    document.body.classList.remove("stale");
+    if (!titled && d.title) { $("#title").innerHTML = `<b>${d.title}</b> panel`; document.title = d.title; titled = true; }
+    $("#updated").textContent = "live — " + new Date(d.time*1000).toLocaleTimeString();
+
+    let rows = "";
+    for (const k of d.disks) {
+      const pct = k.total ? Math.round(100*k.used/k.total) : 0;
+      rows += `<tr>
+        <td><span class="dot ${k.state}"></span>${k.label} <span style="color:var(--dim)">· ${k.serial} ${k.dev?("("+k.dev+")"):""}</span></td>
+        <td>${k.state==="standby" ? "<span style='color:var(--dim)'>sleeping</span>" : (k.temp!=null? k.temp+" °C":"—")}</td>
+        <td class="num speed">${fmtS(k.read)||"·"}</td>
+        <td class="num wr">${fmtS(k.write)||"·"}</td>
+        <td>${k.total?`<div class="bar ${pct>90?"hot":""}"><i style="width:${pct}%"></i><span>${pct}%</span></div>`:""}</td>
+        <td class="num">${k.total? fmtB(k.total-k.used):""}</td></tr>`;
+    }
+    for (const p of d.pools) {
+      const pct = p.total? Math.round(100*p.used/p.total):0;
+      rows += `<tr><td><b>${p.name}</b> <span style="color:var(--dim)">· pool</span></td><td></td><td></td><td></td>
+        <td><div class="bar ${pct>90?"hot":""}"><i style="width:${pct}%"></i><span>${pct}%</span></div></td>
+        <td class="num">${fmtB(p.total-p.used)}</td></tr>`;
+    }
+    $("#disks tbody").innerHTML = rows;
+
+    $("#sys").innerHTML =
+      `<div class="stat"><span>CPU</span><b>${d.cpu}%${d.cpu_temp?` · ${d.cpu_temp} °C`:""}</b></div>
+       ${d.cpu_power!=null?`<div class="stat"><span>CPU package power</span><b>${d.cpu_power} W</b></div>`:""}
+       <div class="stat"><span>Memory</span><b>${fmtB(d.mem.used)} / ${fmtB(d.mem.total)}</b></div>`;
+
+    if (d.gpu) {
+      $("#gpuPanel").classList.remove("hidden");
+      $("#gpuTitle").textContent = "GPU — " + d.gpu.name;
+      $("#gpu").innerHTML =
+        `<div class="stat"><span>Load</span><b>${d.gpu.util}%</b></div>
+         <div class="stat"><span>Encoder sessions</span><b>${d.gpu.enc_sessions}</b></div>
+         <div class="stat"><span>VRAM</span><b>${d.gpu.vram_used} / ${d.gpu.vram_total} MB</b></div>
+         <div class="stat"><span>Temp / Power</span><b>${d.gpu.temp} °C / ${d.gpu.power.toFixed(0)} W</b></div>`;
+    }
+
+    $("#net").innerHTML =
+      `<div class="stat"><span>LAN ↓ in</span><b>${fmtS(d.net.rx)||"idle"}</b></div>
+       <div class="stat"><span>LAN ↑ out</span><b>${fmtS(d.net.tx)||"idle"}</b></div>
+       ${(d.net.ts_rx||d.net.ts_tx)?`<div class="stat"><span>Tailscale ↓</span><b>${fmtS(d.net.ts_rx)||"idle"}</b></div>
+       <div class="stat"><span>Tailscale ↑</span><b>${fmtS(d.net.ts_tx)||"idle"}</b></div>`:""}`;
+
+    const rows2 = [];
+    for (const t of d.temps) {
+      if (["k10temp","coretemp","zenpower"].includes(t.chip)) continue; // shown in System
+      rows2.push(`<div class="stat"><span>${t.chip.replace(/_/g," ")} ${t.label}</span><b>${t.temp} °C</b></div>`);
+    }
+    if (d.lsi_temp!=null) rows2.push(`<div class="stat"><span>LSI HBA</span><b>${d.lsi_temp} °C</b></div>`);
+    if (d.fans.length) rows2.push(`<div class="stat"><span>Fans</span><b>${d.fans.map(f=>f.rpm).join(" / ")} rpm</b></div>`);
+    $("#temps").innerHTML = rows2.join("") || "<div class='stat'><span>no sensors found</span></div>";
+
+    $("#cts").innerHTML = d.containers.map(c =>
+      `<span class="ct"><span class="dot ${c.state==="running"?"active":"standby"}"></span>${c.name}</span>`).join("");
+  } catch(e) {
+    document.body.classList.add("stale");
+    $("#updated").textContent = "reconnecting…";
+  }
+}
+tick(); setInterval(tick, 2000);
+</script>
+</body>
+</html>
