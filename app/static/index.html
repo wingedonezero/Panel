@@ -186,7 +186,7 @@ async function openSettings() {
   sEl("sDisks").querySelector("tbody").innerHTML = s.disks.map(d =>
     `<tr data-serial="${d.serial}">
        <td style="color:var(--dim)">${d.serial}${d.dev?` (${d.dev})`:""}</td>
-       <td><input type="text" class="dlabel" value="${d.label===d.serial?"":d.label}" placeholder="${d.serial}"></td>
+       <td><input type="text" class="dlabel" value="${d.custom?d.label:""}" placeholder="${d.auto||d.serial}"></td>
        <td><input type="checkbox" class="dhide" ${d.hidden?"checked":""}></td>
      </tr>`).join("");
   sEl("saveMsg").textContent = s.writable ? "" : "warning: /config is not writable — mount a volume to persist";

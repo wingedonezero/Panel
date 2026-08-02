@@ -83,11 +83,26 @@ def discover_disks():
                 # prefer a data mount over ESP-style mounts
                 if not mnt.startswith(("/boot", "/efi")):
                     break
+        try:
+            model = open(f"/sys/block/{dev}/device/model").read().strip()
+        except Exception:
+            model = ""
+        try:
+            size = int(open(f"/sys/block/{dev}/size").read()) * 512
+        except Exception:
+            size = 0
+        auto = model or serial
+        if size:
+            auto += f" · {size / 1e12:.0f}T" if size >= 1e12 else f" · {size / 1e9:.0f}G"
         disks.append({
             "serial": serial,
             "dev": dev,
             "node": node,
-            "label": config.DISK_LABELS.get(serial, serial),
+            "model": model,
+            "size": size,
+            "auto": auto,
+            "label": config.DISK_LABELS.get(serial, auto),
+            "custom": serial in config.DISK_LABELS,
             "mount": mount,
         })
     return disks

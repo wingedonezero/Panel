@@ -149,8 +149,8 @@ def api_stats():
 @app.route("/api/settings", methods=["GET"])
 def get_settings():
     s = config.current()
-    s["disks"] = [{"serial": d["serial"], "dev": d["dev"],
-                   "label": d["label"], "hidden": False}
+    s["disks"] = [{"serial": d["serial"], "dev": d["dev"], "auto": d["auto"],
+                   "label": d["label"], "custom": d["custom"], "hidden": False}
                   for d in C.discover_disks()]
     # include hidden disks so they can be un-hidden from the settings page
     shown = {d["serial"] for d in s["disks"]}
