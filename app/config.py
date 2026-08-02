@@ -57,7 +57,8 @@ def _settings_from_file():
 def load():
     """(Re)compute effective config: env defaults overlaid with settings.json."""
     global PORT, INTERVAL, TITLE, IDLE_PAUSE, IDLE_WINDOW, DISK_LABELS, \
-        HIDE_DISKS, POOLS, NET_LAN_REGEX, STORCLI, SPIN_EVERY, LSI_EVERY, HOSTROOT
+        HIDE_DISKS, POOLS, NET_LAN_REGEX, STORCLI, SPIN_EVERY, LSI_EVERY, \
+        HOSTROOT, SHOW_GRAPHS
 
     env = os.environ.get
     PORT = int(env("PANEL_PORT", "8763"))          # env-only (needs restart anyway)
@@ -68,6 +69,7 @@ def load():
     TITLE = env("PANEL_TITLE", "") or socket.gethostname()
     IDLE_PAUSE = _bool(env("PANEL_IDLE_PAUSE"), True)
     IDLE_WINDOW = float(env("PANEL_IDLE_WINDOW", "15"))
+    SHOW_GRAPHS = _bool(env("PANEL_GRAPHS"), True)
     DISK_LABELS = _parse_labels(env("PANEL_DISKS", ""))
     HIDE_DISKS = {s.strip() for s in env("PANEL_HIDE_DISKS", "").split(",") if s.strip()}
     NET_LAN_REGEX = env("PANEL_NET_LAN_REGEX", r"^(eth|en|bond)")
@@ -88,6 +90,8 @@ def load():
         IDLE_PAUSE = _bool(s["idle_pause"], IDLE_PAUSE)
     if "idle_window" in s:
         IDLE_WINDOW = max(5.0, float(s["idle_window"]))
+    if "show_graphs" in s:
+        SHOW_GRAPHS = _bool(s["show_graphs"], SHOW_GRAPHS)
     if "disk_labels" in s:
         DISK_LABELS = {**DISK_LABELS, **s["disk_labels"]}
     if "hide_disks" in s:
@@ -99,7 +103,7 @@ def load():
 def save(new):
     """Merge into settings.json and re-apply. Only known keys are stored."""
     allowed = {"title", "interval", "idle_pause", "idle_window",
-               "disk_labels", "hide_disks", "storcli"}
+               "disk_labels", "hide_disks", "storcli", "show_graphs"}
     with _write_lock:
         s = _settings_from_file()
         for k, v in new.items():
@@ -118,6 +122,7 @@ def current():
     return {
         "title": TITLE, "interval": INTERVAL,
         "idle_pause": IDLE_PAUSE, "idle_window": IDLE_WINDOW,
+        "show_graphs": SHOW_GRAPHS,
         "disk_labels": dict(DISK_LABELS), "hide_disks": sorted(HIDE_DISKS),
         "storcli": STORCLI,
         "writable": os.access(CONFIG_DIR, os.W_OK) if os.path.isdir(CONFIG_DIR)

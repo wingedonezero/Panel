@@ -29,9 +29,14 @@
   .bar i { position:absolute; inset:0 auto 0 0; background:linear-gradient(90deg,#2f8fdd,#57c22d); border-radius:4px; }
   .bar.hot i { background:linear-gradient(90deg,#dd8f2f,#e22828); }
   .bar span { position:absolute; inset:0; text-align:center; font-size:10px; line-height:14px; color:#fff; text-shadow:0 1px 2px #000; }
-  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:14px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:14px; }
   .stat { display:flex; justify-content:space-between; padding:3px 0; font-size:13px; }
   .stat b { font-variant-numeric:tabular-nums; font-weight:600; }
+  canvas.spark { width:100%; height:46px; display:block; margin:4px 0 8px; background:var(--row); border-radius:6px; }
+  .glegend { display:flex; gap:14px; font-size:11px; color:var(--dim); margin-bottom:2px; }
+  .glegend i { display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:5px; vertical-align:-1px; }
+  .gproc { font-size:12px; color:var(--dim); padding:2px 0 2px 8px; }
+  .gproc b { color:var(--text); font-weight:500; }
   .cts { display:flex; flex-wrap:wrap; gap:6px; }
   .ct { background:var(--row); border-radius:14px; padding:3px 12px 3px 8px; font-size:12px; }
   .stale { opacity:.4; transition:opacity .5s; }
@@ -69,6 +74,7 @@
   <div class="frow"><span>Poll interval (seconds)</span><input type="number" id="sInterval" min="0.5" step="0.5"></div>
   <div class="frow"><span>Pause probing when nobody is watching</span><input type="checkbox" id="sIdle"></div>
   <div class="frow"><span>Idle window (seconds)</span><input type="number" id="sIdleWin" min="5" step="5"></div>
+  <div class="frow"><span>Show live graphs (CPU / GPU / network)</span><input type="checkbox" id="sGraphs"></div>
   <h3>Disks — labels &amp; visibility <span style="text-transform:none;letter-spacing:0">(new disks appear automatically; labels are cosmetic)</span></h3>
   <table class="dtable" id="sDisks"><thead><tr><th>Serial</th><th>Label</th><th>Hide</th></tr></thead><tbody></tbody></table>
   <div class="btns">
@@ -86,9 +92,16 @@
 </div>
 
 <div class="grid">
-  <div class="panel"><h2>System</h2><div id="sys"></div></div>
-  <div class="panel hidden" id="gpuPanel"><h2 id="gpuTitle">GPU</h2><div id="gpu"></div></div>
-  <div class="panel"><h2>Network</h2><div id="net"></div></div>
+  <div class="panel"><h2>System</h2>
+    <canvas class="spark hidden" id="gCpu"></canvas>
+    <div id="sys"></div></div>
+  <div class="panel hidden" id="gpuPanel"><h2 id="gpuTitle">GPU</h2>
+    <canvas class="spark hidden" id="gGpu"></canvas>
+    <div id="gpu"></div><div id="gpuProcs"></div></div>
+  <div class="panel"><h2>Network</h2>
+    <div class="glegend hidden" id="netLegend"><span><i style="background:#57c22d"></i>in</span><span><i style="background:#ff9d45"></i>out</span></div>
+    <canvas class="spark hidden" id="gNet"></canvas>
+    <div id="net"></div></div>
   <div class="panel"><h2>Temps &amp; Fans</h2><div id="temps"></div></div>
 </div>
 
@@ -99,6 +112,33 @@ const $ = s => document.querySelector(s);
 const fmtB = n => { if(!n) return "0"; const u=["B","KB","MB","GB","TB"]; let i=0; while(n>=1024&&i<4){n/=1024;i++} return n.toFixed(n>=100?0:1)+" "+u[i]; };
 const fmtS = n => n < 51200 ? "" : fmtB(n)+"/s";   // treat sub-50KB/s as idle noise
 let titled = false;
+
+// rolling client-side history for graphs (exists only while the page is open)
+const HMAX = 150;
+const hist = { cpu:[], gpu:[], rx:[], tx:[] };
+const push = (k,v) => { hist[k].push(v); if (hist[k].length > HMAX) hist[k].shift(); };
+
+function spark(id, series, colors, fixedMax) {
+  const c = $(id); if (!c) return;
+  const dpr = window.devicePixelRatio || 1;
+  const W = c.clientWidth * dpr, H = c.clientHeight * dpr;
+  if (c.width !== W) { c.width = W; c.height = H; }
+  const ctx = c.getContext("2d");
+  ctx.clearRect(0, 0, W, H);
+  const max = fixedMax || Math.max(1, ...series.flat());
+  series.forEach((data, si) => {
+    if (data.length < 2) return;
+    ctx.beginPath();
+    data.forEach((v, i) => {
+      const x = (i / (HMAX - 1)) * W;
+      const y = H - 2 - (Math.min(v, max) / max) * (H - 6);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.strokeStyle = colors[si]; ctx.lineWidth = 1.5 * dpr; ctx.stroke();
+    ctx.lineTo((data.length - 1) / (HMAX - 1) * W, H); ctx.lineTo(0, H); ctx.closePath();
+    ctx.fillStyle = colors[si] + "22"; ctx.fill();
+  });
+}
 
 async function tick() {
   try {
@@ -141,6 +181,25 @@ async function tick() {
          <div class="stat"><span>Encoder sessions</span><b>${d.gpu.enc_sessions}</b></div>
          <div class="stat"><span>VRAM</span><b>${d.gpu.vram_used} / ${d.gpu.vram_total} MB</b></div>
          <div class="stat"><span>Temp / Power</span><b>${d.gpu.temp} °C / ${d.gpu.power.toFixed(0)} W</b></div>`;
+      const procs = d.gpu.procs || [];
+      $("#gpuProcs").innerHTML = procs.length
+        ? `<div class="stat" style="margin-top:6px"><span style="color:var(--dim)">In use by</span></div>` +
+          procs.map(p => `<div class="gproc"><b>${p.container || "host"}</b> — ${p.name} · ${p.mem} MB</div>`).join("")
+        : "";
+    }
+
+    // graphs (client-side rolling window)
+    push("cpu", d.cpu); if (d.gpu) push("gpu", d.gpu.util);
+    push("rx", d.net.rx); push("tx", d.net.tx);
+    const g = !!d.show_graphs;
+    $("#gCpu").classList.toggle("hidden", !g);
+    $("#gGpu").classList.toggle("hidden", !g || !d.gpu);
+    $("#gNet").classList.toggle("hidden", !g);
+    $("#netLegend").classList.toggle("hidden", !g);
+    if (g) {
+      spark("#gCpu", [hist.cpu], ["#2f8fdd"], 100);
+      if (d.gpu) spark("#gGpu", [hist.gpu], ["#57c22d"], 100);
+      spark("#gNet", [hist.rx, hist.tx], ["#57c22d", "#ff9d45"]);
     }
 
     $("#net").innerHTML =
@@ -183,6 +242,7 @@ async function openSettings() {
   sEl("sInterval").value = s.interval;
   sEl("sIdle").checked = !!s.idle_pause;
   sEl("sIdleWin").value = s.idle_window;
+  sEl("sGraphs").checked = !!s.show_graphs;
   sEl("sDisks").querySelector("tbody").innerHTML = s.disks.map(d =>
     `<tr data-serial="${d.serial}">
        <td style="color:var(--dim)">${d.serial}${d.dev?` (${d.dev})`:""}</td>
@@ -205,6 +265,7 @@ async function saveSettings() {
     interval: parseFloat(sEl("sInterval").value) || 2,
     idle_pause: sEl("sIdle").checked,
     idle_window: parseFloat(sEl("sIdleWin").value) || 15,
+    show_graphs: sEl("sGraphs").checked,
     disk_labels: labels, hide_disks: hidden,
   };
   const r = await fetch("api/settings", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});

@@ -268,6 +268,31 @@ def gpu_stats():
         return None
 
 
+def gpu_procs(containers):
+    """GPU-using processes, attributed to containers via /proc/<pid>/cgroup
+    (works because we run with pid: host)."""
+    out = sh(["nvidia-smi", "--query-compute-apps=pid,process_name,used_memory",
+              "--format=csv,noheader,nounits"])
+    procs = []
+    by_id = {c["id"]: c["name"] for c in containers if c.get("id")}
+    for line in out.strip().splitlines():
+        try:
+            pid, pname, mem = [x.strip() for x in line.split(",")]
+            owner = None
+            try:
+                cg = open(f"/proc/{pid}/cgroup").read()
+                m = re.search(r"docker[/-]([0-9a-f]{12})", cg)
+                if m:
+                    owner = by_id.get(m.group(1), m.group(1))
+            except Exception:
+                pass
+            procs.append({"pid": int(pid), "name": os.path.basename(pname),
+                          "container": owner, "mem": int(mem)})
+        except Exception:
+            continue
+    return procs
+
+
 def lsi_temp():
     if not config.STORCLI or not os.path.isfile(config.STORCLI):
         return None
@@ -291,7 +316,8 @@ def docker_ps():
         s.close()
         data = json.loads(buf.split(b"\r\n\r\n", 1)[1])
         return sorted(
-            [{"name": c["Names"][0].lstrip("/"), "state": c["State"]} for c in data],
+            [{"name": c["Names"][0].lstrip("/"), "state": c["State"],
+              "id": c["Id"][:12]} for c in data],
             key=lambda x: (x["state"] != "running", x["name"]))
     except Exception:
         return []

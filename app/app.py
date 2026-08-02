@@ -120,11 +120,15 @@ def sampler():
         cpu_pct = round(100 * (1 - (ci - pi) / max(1, ct - pt)), 1)
         mt, mu = C.read_mem()
         hw_temps, hw_fans = C.read_hwmon()
+        containers = C.docker_ps()
+        gpu = C.gpu_stats()
+        if gpu:
+            gpu["procs"] = C.gpu_procs(containers)
 
         with _lock:
             STATS.update({
                 "time": int(now), "title": config.TITLE, "paused": False,
-                "interval": config.INTERVAL,
+                "interval": config.INTERVAL, "show_graphs": config.SHOW_GRAPHS,
                 "disks": disk_rows, "pools": pool_rows,
                 "cpu": cpu_pct, "cpu_temp": C.cpu_temp(hw_temps), "cpu_power": cpu_power,
                 "mem": {"total": mt, "used": mu},
@@ -132,9 +136,9 @@ def sampler():
                         "tx": max(0, (net[1] - prev_net[1]) / dt),
                         "ts_rx": max(0, (net[2] - prev_net[2]) / dt),
                         "ts_tx": max(0, (net[3] - prev_net[3]) / dt)},
-                "gpu": C.gpu_stats(), "lsi_temp": lsi,
+                "gpu": gpu, "lsi_temp": lsi,
                 "temps": hw_temps, "fans": hw_fans,
-                "containers": C.docker_ps(),
+                "containers": containers,
             })
         prev_ds, prev_net, prev_cpu = ds, net, cpu
 
