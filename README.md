@@ -44,6 +44,14 @@ services:
       - /:/hostroot:ro
 ```
 
+### Settings page
+
+The gear (⚙) opens a settings page: title, poll interval, idle-pause toggle +
+window, and per-disk labels/visibility. Saved to `/config/settings.json`
+(mount a volume at `/config` to persist) — settings win over env vars, apply
+live, and new disks/pools always appear automatically; labels are cosmetic.
+If `/config/bin/storcli64*` exists it is auto-detected — no env needed.
+
 ### Environment variables
 
 | Variable | Default | Purpose |

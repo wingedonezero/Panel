@@ -1,24 +1,36 @@
-"""Panel configuration — all via environment variables, all optional.
+"""Panel configuration.
 
-The goal: zero-config on a typical setup (disks, pools, CPU, network are
-auto-discovered), with env overrides for labels and anything unusual.
+Two layers, merged at load():
+  1. Environment variables  — deploy-time defaults (all optional)
+  2. /config/settings.json  — the settings page; wins over env when present
+
+Everything is readable as module attributes (config.INTERVAL etc.) and is
+refreshed in place by load(), so the sampler picks up changes on its next
+loop without a restart.
 """
+import glob
+import json
 import os
 import socket
+import threading
+
+CONFIG_DIR = os.environ.get("PANEL_CONFIG_DIR", "/config")
+SETTINGS_FILE = os.path.join(CONFIG_DIR, "settings.json")
+_write_lock = threading.Lock()
 
 
-def _bool(name, default):
-    v = os.environ.get(name, "").strip().lower()
+def _bool(v, default):
+    if isinstance(v, bool):
+        return v
+    v = str(v or "").strip().lower()
     if not v:
         return default
     return v in ("1", "true", "yes", "on")
 
 
 def _parse_labels(raw):
-    """PANEL_DISKS="SERIAL=label,SERIAL=label" -> {serial: label}"""
     out = {}
     for part in raw.split(","):
-        part = part.strip()
         if "=" in part:
             serial, label = part.split("=", 1)
             out[serial.strip()] = label.strip()
@@ -26,40 +38,91 @@ def _parse_labels(raw):
 
 
 def _parse_pools(raw):
-    """PANEL_POOLS="name=/path;name2=/path2" -> [(name, path)]"""
     out = []
     for part in raw.split(";"):
-        part = part.strip()
         if "=" in part:
             name, path = part.split("=", 1)
             out.append((name.strip(), path.strip()))
     return out
 
 
-PORT = int(os.environ.get("PANEL_PORT", "8763"))
-INTERVAL = float(os.environ.get("PANEL_INTERVAL", "2"))
-TITLE = os.environ.get("PANEL_TITLE", "") or socket.gethostname()
+def _settings_from_file():
+    try:
+        with open(SETTINGS_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
-# Pause all probing/sampling when no browser has polled recently
-IDLE_PAUSE = _bool("PANEL_IDLE_PAUSE", True)
-IDLE_WINDOW = float(os.environ.get("PANEL_IDLE_WINDOW", "15"))
 
-# Disk display labels by serial (discovery finds the disks themselves)
-DISK_LABELS = _parse_labels(os.environ.get("PANEL_DISKS", ""))
-HIDE_DISKS = {s.strip() for s in os.environ.get("PANEL_HIDE_DISKS", "").split(",") if s.strip()}
+def load():
+    """(Re)compute effective config: env defaults overlaid with settings.json."""
+    global PORT, INTERVAL, TITLE, IDLE_PAUSE, IDLE_WINDOW, DISK_LABELS, \
+        HIDE_DISKS, POOLS, NET_LAN_REGEX, STORCLI, SPIN_EVERY, LSI_EVERY, HOSTROOT
 
-# Pools: explicit list, else fuse.mergerfs mounts are auto-detected
-POOLS = _parse_pools(os.environ.get("PANEL_POOLS", ""))
+    env = os.environ.get
+    PORT = int(env("PANEL_PORT", "8763"))          # env-only (needs restart anyway)
+    HOSTROOT = env("PANEL_HOSTROOT", "/hostroot")  # env-only
+    POOLS = _parse_pools(env("PANEL_POOLS", ""))   # env override; else auto-detect
 
-# LAN interfaces counted in the network panel (regex on interface name)
-NET_LAN_REGEX = os.environ.get("PANEL_NET_LAN_REGEX", r"^(eth|en|bond)")
+    INTERVAL = float(env("PANEL_INTERVAL", "2"))
+    TITLE = env("PANEL_TITLE", "") or socket.gethostname()
+    IDLE_PAUSE = _bool(env("PANEL_IDLE_PAUSE"), True)
+    IDLE_WINDOW = float(env("PANEL_IDLE_WINDOW", "15"))
+    DISK_LABELS = _parse_labels(env("PANEL_DISKS", ""))
+    HIDE_DISKS = {s.strip() for s in env("PANEL_HIDE_DISKS", "").split(",") if s.strip()}
+    NET_LAN_REGEX = env("PANEL_NET_LAN_REGEX", r"^(eth|en|bond)")
+    SPIN_EVERY = float(env("PANEL_SPIN_EVERY", "15"))
+    LSI_EVERY = float(env("PANEL_LSI_EVERY", "60"))
 
-# Optional Broadcom/LSI storcli binary for HBA temperature (path inside container)
-STORCLI = os.environ.get("PANEL_STORCLI", "")
+    STORCLI = env("PANEL_STORCLI", "")
+    if not STORCLI:  # auto-detect a mounted-in binary
+        hits = sorted(glob.glob(os.path.join(CONFIG_DIR, "bin", "storcli64*")))
+        STORCLI = hits[0] if hits else ""
 
-# Slow-probe cadences (seconds)
-SPIN_EVERY = float(os.environ.get("PANEL_SPIN_EVERY", "15"))
-LSI_EVERY = float(os.environ.get("PANEL_LSI_EVERY", "60"))
+    s = _settings_from_file()
+    if s.get("title"):
+        TITLE = s["title"]
+    if "interval" in s:
+        INTERVAL = max(0.5, float(s["interval"]))
+    if "idle_pause" in s:
+        IDLE_PAUSE = _bool(s["idle_pause"], IDLE_PAUSE)
+    if "idle_window" in s:
+        IDLE_WINDOW = max(5.0, float(s["idle_window"]))
+    if "disk_labels" in s:
+        DISK_LABELS = {**DISK_LABELS, **s["disk_labels"]}
+    if "hide_disks" in s:
+        HIDE_DISKS = set(s["hide_disks"])
+    if s.get("storcli"):
+        STORCLI = s["storcli"]
 
-# Where the host root is bind-mounted (for usage of paths outside the container)
-HOSTROOT = os.environ.get("PANEL_HOSTROOT", "/hostroot")
+
+def save(new):
+    """Merge into settings.json and re-apply. Only known keys are stored."""
+    allowed = {"title", "interval", "idle_pause", "idle_window",
+               "disk_labels", "hide_disks", "storcli"}
+    with _write_lock:
+        s = _settings_from_file()
+        for k, v in new.items():
+            if k in allowed:
+                s[k] = v
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        tmp = SETTINGS_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(s, f, indent=2)
+        os.replace(tmp, SETTINGS_FILE)
+    load()
+
+
+def current():
+    """Effective settings for the settings page."""
+    return {
+        "title": TITLE, "interval": INTERVAL,
+        "idle_pause": IDLE_PAUSE, "idle_window": IDLE_WINDOW,
+        "disk_labels": dict(DISK_LABELS), "hide_disks": sorted(HIDE_DISKS),
+        "storcli": STORCLI,
+        "writable": os.access(CONFIG_DIR, os.W_OK) if os.path.isdir(CONFIG_DIR)
+                    else os.access(os.path.dirname(CONFIG_DIR) or "/", os.W_OK),
+    }
+
+
+load()

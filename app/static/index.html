@@ -36,11 +36,47 @@
   .ct { background:var(--row); border-radius:14px; padding:3px 12px 3px 8px; font-size:12px; }
   .stale { opacity:.4; transition:opacity .5s; }
   .hidden { display:none; }
+  .topbar { display:flex; justify-content:space-between; align-items:flex-start; }
+  .gear { background:var(--panel); border:none; color:var(--dim); font-size:17px; border-radius:8px; padding:6px 11px; cursor:pointer; }
+  .gear:hover { color:var(--text); }
+  #settings { position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; align-items:flex-start; justify-content:center; padding:40px 16px; overflow:auto; z-index:10; }
+  #settings.open { display:flex; }
+  .sheet { background:var(--panel); border-radius:10px; padding:20px 22px; width:100%; max-width:560px; }
+  .sheet h2 { font-size:14px; margin-bottom:14px; }
+  .sheet h3 { font-size:11px; text-transform:uppercase; letter-spacing:1px; color:var(--dim); margin:16px 0 8px; }
+  .frow { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:5px 0; font-size:13px; }
+  .frow input[type=text], .frow input[type=number] { background:var(--row); border:1px solid var(--bar); color:var(--text); border-radius:6px; padding:5px 8px; font-size:13px; width:180px; }
+  .frow input[type=number] { width:80px; }
+  .dtable { width:100%; } .dtable td { background:transparent; padding:3px 4px; font-size:12px; }
+  .dtable input[type=text] { width:130px; }
+  .btns { display:flex; gap:10px; justify-content:flex-end; margin-top:18px; }
+  .btn { border:none; border-radius:6px; padding:7px 16px; font-size:13px; cursor:pointer; }
+  .btn.save { background:var(--green); color:#10240a; font-weight:600; }
+  .btn.cancel { background:var(--row); color:var(--text); }
+  .savemsg { font-size:12px; color:var(--dim); align-self:center; margin-right:auto; }
 </style>
 </head>
 <body>
-<h1 id="title"><b>panel</b></h1>
-<div class="sub" id="updated">connecting…</div>
+<div class="topbar">
+  <div><h1 id="title"><b>panel</b></h1><div class="sub" id="updated">connecting…</div></div>
+  <button class="gear" id="gearBtn" title="Settings">⚙</button>
+</div>
+
+<div id="settings"><div class="sheet">
+  <h2>Settings</h2>
+  <h3>General</h3>
+  <div class="frow"><span>Title</span><input type="text" id="sTitle"></div>
+  <div class="frow"><span>Poll interval (seconds)</span><input type="number" id="sInterval" min="0.5" step="0.5"></div>
+  <div class="frow"><span>Pause probing when nobody is watching</span><input type="checkbox" id="sIdle"></div>
+  <div class="frow"><span>Idle window (seconds)</span><input type="number" id="sIdleWin" min="5" step="5"></div>
+  <h3>Disks — labels &amp; visibility <span style="text-transform:none;letter-spacing:0">(new disks appear automatically; labels are cosmetic)</span></h3>
+  <table class="dtable" id="sDisks"><thead><tr><th>Serial</th><th>Label</th><th>Hide</th></tr></thead><tbody></tbody></table>
+  <div class="btns">
+    <span class="savemsg" id="saveMsg"></span>
+    <button class="btn cancel" id="btnCancel">Cancel</button>
+    <button class="btn save" id="btnSave">Save</button>
+  </div>
+</div></div>
 
 <div class="panel">
   <h2>Disks</h2>
@@ -70,6 +106,7 @@ async function tick() {
     if (!d.disks) return;
     document.body.classList.remove("stale");
     if (!titled && d.title) { $("#title").innerHTML = `<b>${d.title}</b> panel`; document.title = d.title; titled = true; }
+    if (d.interval) pollMs = Math.max(500, d.interval * 1000);
     $("#updated").textContent = "live — " + new Date(d.time*1000).toLocaleTimeString();
 
     let rows = "";
@@ -128,7 +165,57 @@ async function tick() {
     $("#updated").textContent = "reconnecting…";
   }
 }
-tick(); setInterval(tick, 2000);
+let pollMs = 2000, timer = null;
+function loop() {
+  timer = setTimeout(async () => {
+    if (!document.hidden) await tick();   // hidden tab -> no polling -> server idles too
+    loop();
+  }, pollMs);
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) tick(); });
+tick(); loop();
+
+// ---- settings ----
+const sEl = id => document.getElementById(id);
+async function openSettings() {
+  const r = await fetch("api/settings"); const s = await r.json();
+  sEl("sTitle").value = s.title || "";
+  sEl("sInterval").value = s.interval;
+  sEl("sIdle").checked = !!s.idle_pause;
+  sEl("sIdleWin").value = s.idle_window;
+  sEl("sDisks").querySelector("tbody").innerHTML = s.disks.map(d =>
+    `<tr data-serial="${d.serial}">
+       <td style="color:var(--dim)">${d.serial}${d.dev?` (${d.dev})`:""}</td>
+       <td><input type="text" class="dlabel" value="${d.label===d.serial?"":d.label}" placeholder="${d.serial}"></td>
+       <td><input type="checkbox" class="dhide" ${d.hidden?"checked":""}></td>
+     </tr>`).join("");
+  sEl("saveMsg").textContent = s.writable ? "" : "warning: /config is not writable — mount a volume to persist";
+  sEl("settings").classList.add("open");
+}
+async function saveSettings() {
+  const labels = {}, hidden = [];
+  for (const tr of sEl("sDisks").querySelectorAll("tbody tr")) {
+    const serial = tr.dataset.serial;
+    const label = tr.querySelector(".dlabel").value.trim();
+    if (label) labels[serial] = label;
+    if (tr.querySelector(".dhide").checked) hidden.push(serial);
+  }
+  const body = {
+    title: sEl("sTitle").value.trim(),
+    interval: parseFloat(sEl("sInterval").value) || 2,
+    idle_pause: sEl("sIdle").checked,
+    idle_window: parseFloat(sEl("sIdleWin").value) || 15,
+    disk_labels: labels, hide_disks: hidden,
+  };
+  const r = await fetch("api/settings", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+  const res = await r.json();
+  if (res.ok) { sEl("settings").classList.remove("open"); titled = false; tick(); }
+  else sEl("saveMsg").textContent = res.error || "save failed";
+}
+sEl("gearBtn").onclick = openSettings;
+sEl("btnCancel").onclick = () => sEl("settings").classList.remove("open");
+sEl("btnSave").onclick = saveSettings;
+sEl("settings").addEventListener("click", e => { if (e.target === sEl("settings")) sEl("settings").classList.remove("open"); });
 </script>
 </body>
 </html>

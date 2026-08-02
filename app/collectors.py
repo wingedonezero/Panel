@@ -112,7 +112,14 @@ def read_diskstats():
     return out
 
 
-_lan_re = re.compile(config.NET_LAN_REGEX)
+_lan_re_cache = {}
+
+
+def _lan_re():
+    pat = config.NET_LAN_REGEX
+    if pat not in _lan_re_cache:
+        _lan_re_cache[pat] = re.compile(pat)
+    return _lan_re_cache[pat]
 
 
 def read_netdev():
@@ -123,7 +130,7 @@ def read_netdev():
         name, rest = line.split(":", 1)
         name = name.strip()
         f = rest.split()
-        if _lan_re.match(name):
+        if _lan_re().match(name):
             rx += int(f[0]); tx += int(f[8])
         elif name.startswith("tailscale"):
             ts_rx += int(f[0]); ts_tx += int(f[8])

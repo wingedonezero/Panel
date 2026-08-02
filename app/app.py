@@ -9,7 +9,7 @@ import os
 import threading
 import time
 
-from flask import Flask, jsonify, send_file
+from flask import Flask, jsonify, request, send_file
 
 import collectors as C
 import config
@@ -18,6 +18,7 @@ app = Flask(__name__)
 STATS = {}
 _lock = threading.Lock()
 _last_hit = [0.0]
+_rediscover = threading.Event()
 
 
 def sampler():
@@ -52,7 +53,9 @@ def sampler():
             continue
         prev_t = now
 
-        if now - last_rediscover > 300:  # pick up hotplugged disks / new pools
+        if now - last_rediscover > 300 or _rediscover.is_set():
+            # pick up hotplugged disks / new pools / settings changes
+            _rediscover.clear()
             last_rediscover = now
             disks = C.discover_disks()
             pools = C.discover_pools()
@@ -121,6 +124,7 @@ def sampler():
         with _lock:
             STATS.update({
                 "time": int(now), "title": config.TITLE, "paused": False,
+                "interval": config.INTERVAL,
                 "disks": disk_rows, "pools": pool_rows,
                 "cpu": cpu_pct, "cpu_temp": C.cpu_temp(hw_temps), "cpu_power": cpu_power,
                 "mem": {"total": mt, "used": mu},
@@ -140,6 +144,33 @@ def api_stats():
     _last_hit[0] = time.time()
     with _lock:
         return jsonify(STATS)
+
+
+@app.route("/api/settings", methods=["GET"])
+def get_settings():
+    s = config.current()
+    s["disks"] = [{"serial": d["serial"], "dev": d["dev"],
+                   "label": d["label"], "hidden": False}
+                  for d in C.discover_disks()]
+    # include hidden disks so they can be un-hidden from the settings page
+    shown = {d["serial"] for d in s["disks"]}
+    for serial in config.HIDE_DISKS:
+        if serial not in shown:
+            s["disks"].append({"serial": serial, "dev": "",
+                               "label": config.DISK_LABELS.get(serial, serial),
+                               "hidden": True})
+    return jsonify(s)
+
+
+@app.route("/api/settings", methods=["POST"])
+def post_settings():
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        config.save(data)
+    except OSError as e:
+        return jsonify({"ok": False, "error": f"could not write settings: {e}"}), 500
+    _rediscover.set()
+    return jsonify({"ok": True, "settings": config.current()})
 
 
 @app.route("/")
