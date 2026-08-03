@@ -75,6 +75,7 @@
   <div class="frow"><span>Pause probing when nobody is watching</span><input type="checkbox" id="sIdle"></div>
   <div class="frow"><span>Idle window (seconds)</span><input type="number" id="sIdleWin" min="5" step="5"></div>
   <div class="frow"><span>Show live graphs (CPU / GPU / network)</span><input type="checkbox" id="sGraphs"></div>
+  <div class="frow"><span>Assume disk asleep after idle (seconds)</span><input type="number" id="sSpinAfter" min="60" step="60"></div>
   <h3>Disks — labels &amp; visibility <span style="text-transform:none;letter-spacing:0">(new disks appear automatically; labels are cosmetic)</span></h3>
   <table class="dtable" id="sDisks"><thead><tr><th>Serial</th><th>Label</th><th>Hide</th></tr></thead><tbody></tbody></table>
   <div class="btns">
@@ -243,6 +244,7 @@ async function openSettings() {
   sEl("sIdle").checked = !!s.idle_pause;
   sEl("sIdleWin").value = s.idle_window;
   sEl("sGraphs").checked = !!s.show_graphs;
+  sEl("sSpinAfter").value = s.spin_after;
   sEl("sDisks").querySelector("tbody").innerHTML = s.disks.map(d =>
     `<tr data-serial="${d.serial}">
        <td style="color:var(--dim)">${d.serial}${d.dev?` (${d.dev})`:""}</td>
@@ -266,6 +268,7 @@ async function saveSettings() {
     idle_pause: sEl("sIdle").checked,
     idle_window: parseFloat(sEl("sIdleWin").value) || 15,
     show_graphs: sEl("sGraphs").checked,
+    spin_after: parseFloat(sEl("sSpinAfter").value) || 1800,
     disk_labels: labels, hide_disks: hidden,
   };
   const r = await fetch("api/settings", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});

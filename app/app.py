@@ -20,6 +20,73 @@ _lock = threading.Lock()
 _last_hit = [0.0]
 _rediscover = threading.Event()
 
+# Passive spin-state tracking: a tiny always-on loop watches /proc/diskstats
+# (pure memory reads — provably incapable of waking a drive) and records when
+# each device last did real I/O. A disk idle longer than SPIN_AFTER is shown
+# as asleep. No ATA/SCSI commands are ever sent: on some HBAs (LSI SAS) even
+# "standby-safe" queries like CHECK POWER MODE wake drives.
+_last_io = {}
+_START = time.time()
+_IOSTATE = os.path.join(config.CONFIG_DIR, "iostate.json")
+
+
+def _load_iostate():
+    """Restore last-I/O times (keyed by serial) so restarts don't reset the
+    idle clocks back to 'assume active'."""
+    try:
+        import json
+        saved = json.load(open(_IOSTATE))
+        for d in C.discover_disks():
+            ts = saved.get(d["serial"])
+            if ts:
+                _last_io[d["dev"]] = float(ts)
+    except Exception:
+        pass
+
+
+def _save_iostate():
+    try:
+        import json
+        by_serial = {}
+        for d in C.discover_disks():
+            if d["dev"] in _last_io:
+                by_serial[d["serial"]] = _last_io[d["dev"]]
+        tmp = _IOSTATE + ".tmp"
+        json.dump(by_serial, open(tmp, "w"))
+        os.replace(tmp, _IOSTATE)
+    except Exception:
+        pass
+
+
+def io_tracker():
+    _load_iostate()
+    prev = C.read_diskstats()
+    last_save = 0.0
+    while True:
+        time.sleep(5)
+        cur = C.read_diskstats()
+        now = time.time()
+        for dev, v in cur.items():
+            if dev in prev and v != prev[dev]:
+                _last_io[dev] = now
+        prev = cur
+        if now - last_save > 60:
+            last_save = now
+            _save_iostate()
+
+
+def passive_state(dev):
+    if not C.is_rotational(dev):
+        return "active"
+    last = _last_io.get(dev)
+    if last is None:
+        # No observed I/O yet (fresh start, no saved state): assume asleep.
+        # A busy disk proves itself active within seconds via diskstats; the
+        # reverse mistake (assume active -> temp-probe -> wake a sleeper)
+        # is the one we must never make.
+        return "standby"
+    return "active" if time.time() - last < config.SPIN_AFTER else "standby"
+
 
 def sampler():
     disks = C.discover_disks()
@@ -80,12 +147,11 @@ def sampler():
         if now - last_slow > config.SPIN_EVERY:
             last_slow = now
             for k in disks:
-                if C.is_rotational(k["dev"]):
-                    st = C.spin_state(k["node"])
-                else:
-                    st = "active"
+                st = passive_state(k["dev"])
                 spin[k["serial"]] = st
                 if st == "active":
+                    # drive is demonstrably doing I/O anyway; smartctl still
+                    # guards with -n standby as a belt-and-braces measure
                     t = C.disk_temp(k["node"])
                     if t:
                         temps[k["serial"]] = t
@@ -184,5 +250,6 @@ def index():
 
 if __name__ == "__main__":
     _last_hit[0] = time.time()  # sample immediately on startup
+    threading.Thread(target=io_tracker, daemon=True).start()
     threading.Thread(target=sampler, daemon=True).start()
     app.run(host="0.0.0.0", port=config.PORT, threaded=True)
