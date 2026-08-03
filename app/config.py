@@ -58,7 +58,7 @@ def load():
     """(Re)compute effective config: env defaults overlaid with settings.json."""
     global PORT, INTERVAL, TITLE, IDLE_PAUSE, IDLE_WINDOW, DISK_LABELS, \
         HIDE_DISKS, POOLS, NET_LAN_REGEX, STORCLI, SPIN_EVERY, LSI_EVERY, \
-        HOSTROOT, SHOW_GRAPHS, SPIN_AFTER
+        HOSTROOT, SHOW_GRAPHS, SPIN_AFTER, ALERTS_ACK
 
     env = os.environ.get
     PORT = int(env("PANEL_PORT", "8763"))          # env-only (needs restart anyway)
@@ -75,6 +75,7 @@ def load():
     NET_LAN_REGEX = env("PANEL_NET_LAN_REGEX", r"^(eth|en|bond)")
     SPIN_EVERY = float(env("PANEL_SPIN_EVERY", "15"))
     SPIN_AFTER = float(env("PANEL_SPIN_AFTER", "1800"))
+    ALERTS_ACK = 0.0
     LSI_EVERY = float(env("PANEL_LSI_EVERY", "60"))
 
     STORCLI = env("PANEL_STORCLI", "")
@@ -95,6 +96,8 @@ def load():
         SHOW_GRAPHS = _bool(s["show_graphs"], SHOW_GRAPHS)
     if "spin_after" in s:
         SPIN_AFTER = max(60.0, float(s["spin_after"]))
+    if "alerts_ack" in s:
+        ALERTS_ACK = float(s["alerts_ack"])
     if "disk_labels" in s:
         DISK_LABELS = {**DISK_LABELS, **s["disk_labels"]}
     if "hide_disks" in s:
@@ -107,7 +110,7 @@ def save(new):
     """Merge into settings.json and re-apply. Only known keys are stored."""
     allowed = {"title", "interval", "idle_pause", "idle_window",
                "disk_labels", "hide_disks", "storcli", "show_graphs",
-               "spin_after"}
+               "spin_after", "alerts_ack"}
     with _write_lock:
         s = _settings_from_file()
         for k, v in new.items():

@@ -301,6 +301,36 @@ def lsi_temp():
     return int(m.group(1)) if m else None
 
 
+def smart_alerts(ack_ts):
+    """Warnings appended by a smartd -M exec hook to /config/smart-alerts.log
+    (lines: ISO8601|device|message). Newer than the ack watermark only.
+    Pure file read — never touches a drive. See README for the hook recipe."""
+    from datetime import datetime
+    path = os.path.join(config.CONFIG_DIR, "smart-alerts.log")
+    alerts = {}
+    try:
+        with open(path, errors="replace") as f:
+            for line in f:
+                parts = line.strip().split("|", 2)
+                if len(parts) != 3:
+                    continue
+                try:
+                    ts = datetime.fromisoformat(parts[0]).timestamp()
+                except ValueError:
+                    continue
+                if ts <= ack_ts:
+                    continue
+                msg = f"{parts[1]}: {parts[2]}" if parts[1] not in ("?", "") else parts[2]
+                alerts[msg] = max(ts, alerts.get(msg, 0))  # dedupe, keep newest
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+    out = [{"ts": int(t), "text": m} for m, t in alerts.items()]
+    out.sort(key=lambda a: -a["ts"])
+    return out[:20]
+
+
 def docker_ps():
     try:
         s = socket.socket(socket.AF_UNIX)

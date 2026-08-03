@@ -40,6 +40,11 @@
   .cts { display:flex; flex-wrap:wrap; gap:6px; }
   .ct { background:var(--row); border-radius:14px; padding:3px 12px 3px 8px; font-size:12px; }
   .stale { opacity:.4; transition:opacity .5s; }
+  #alerts { background:#38181c; border:1px solid var(--accent); border-radius:8px; padding:12px 16px; margin-bottom:14px; }
+  #alerts h2 { color:#ff6b6b; font-size:12px; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; }
+  .alert { font-size:13px; padding:3px 0; }
+  .alert span { color:var(--dim); font-size:11px; margin-right:8px; }
+  #alertDismiss { float:right; background:var(--row); border:none; color:var(--text); border-radius:6px; padding:4px 12px; font-size:12px; cursor:pointer; }
   .hidden { display:none; }
   .topbar { display:flex; justify-content:space-between; align-items:flex-start; }
   .gear { background:var(--panel); border:none; color:var(--dim); font-size:17px; border-radius:8px; padding:6px 11px; cursor:pointer; }
@@ -84,6 +89,12 @@
     <button class="btn save" id="btnSave">Save</button>
   </div>
 </div></div>
+
+<div id="alerts" class="hidden">
+  <button id="alertDismiss">Dismiss</button>
+  <h2>SMART Warnings</h2>
+  <div id="alertList"></div>
+</div>
 
 <div class="panel">
   <h2>Disks</h2>
@@ -218,6 +229,11 @@ async function tick() {
     if (d.fans.length) rows2.push(`<div class="stat"><span>Fans</span><b>${d.fans.map(f=>f.rpm).join(" / ")} rpm</b></div>`);
     $("#temps").innerHTML = rows2.join("") || "<div class='stat'><span>no sensors found</span></div>";
 
+    const al = d.alerts || [];
+    $("#alerts").classList.toggle("hidden", !al.length);
+    if (al.length) $("#alertList").innerHTML = al.map(a =>
+      `<div class="alert"><span>${new Date(a.ts*1000).toLocaleString()}</span>${a.text}</div>`).join("");
+
     $("#cts").innerHTML = d.containers.map(c =>
       `<span class="ct"><span class="dot ${c.state==="running"?"active":"standby"}"></span>${c.name}</span>`).join("");
   } catch(e) {
@@ -276,6 +292,7 @@ async function saveSettings() {
   if (res.ok) { sEl("settings").classList.remove("open"); titled = false; tick(); }
   else sEl("saveMsg").textContent = res.error || "save failed";
 }
+$("#alertDismiss").onclick = async () => { await fetch("api/alerts/ack", {method:"POST"}); tick(); };
 sEl("gearBtn").onclick = openSettings;
 sEl("btnCancel").onclick = () => sEl("settings").classList.remove("open");
 sEl("btnSave").onclick = saveSettings;

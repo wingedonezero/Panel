@@ -146,6 +146,9 @@ def sampler():
 
         if now - last_slow > config.SPIN_EVERY:
             last_slow = now
+            alerts = C.smart_alerts(config.ALERTS_ACK)
+            with _lock:
+                STATS["alerts"] = alerts
             for k in disks:
                 st = passive_state(k["dev"])
                 spin[k["serial"]] = st
@@ -230,6 +233,14 @@ def get_settings():
                                "label": config.DISK_LABELS.get(serial, serial),
                                "hidden": True})
     return jsonify(s)
+
+
+@app.route("/api/alerts/ack", methods=["POST"])
+def ack_alerts():
+    config.save({"alerts_ack": time.time()})
+    with _lock:
+        STATS["alerts"] = []
+    return jsonify({"ok": True})
 
 
 @app.route("/api/settings", methods=["POST"])

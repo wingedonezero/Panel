@@ -69,6 +69,17 @@ If `/config/bin/storcli64*` exists it is auto-detected — no env needed.
 | `PANEL_SPIN_EVERY` | `15` | Spin-state/temp probe cadence (seconds) |
 | `PANEL_LSI_EVERY` | `60` | storcli probe cadence (seconds) |
 
+### SMART warnings banner (optional)
+
+Panel can show smartd health warnings as a dismissible red banner. Debian 13+
+has no plaintext syslog, so the recipe is a smartd exec hook: a two-line shell
+script (e.g. `/usr/local/bin/panel-smart-alert`) that appends
+`$(date -Iseconds)|$SMARTD_DEVICE|$SMARTD_MESSAGE` to `smart-alerts.log` in
+Panel's config dir, registered with smartd via
+`-m <nomailer> -M exec /usr/local/bin/panel-smart-alert` in its DEFAULT
+directives. Dismissing the banner stores a watermark; only warnings newer than
+the last dismissal are shown, so new problems always re-trigger.
+
 ### storcli note
 
 The Broadcom `storcli64` binary is not redistributed here (licensing). If you
