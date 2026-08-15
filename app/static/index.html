@@ -39,6 +39,7 @@
   .gproc b { color:var(--text); font-weight:500; }
   .cts { display:flex; flex-wrap:wrap; gap:6px; }
   .ct { background:var(--row); border-radius:14px; padding:3px 12px 3px 8px; font-size:12px; }
+  .upd { color:var(--orange); margin-left:6px; font-weight:600; cursor:default; }
   .stale { opacity:.4; transition:opacity .5s; }
   #alerts { background:#38181c; border:1px solid var(--accent); border-radius:8px; padding:12px 16px; margin-bottom:14px; }
   #alerts h2 { color:#ff6b6b; font-size:12px; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; }
@@ -235,7 +236,7 @@ async function tick() {
       `<div class="alert"><span>${new Date(a.ts*1000).toLocaleString()}</span>${a.text}</div>`).join("");
 
     $("#cts").innerHTML = d.containers.map(c =>
-      `<span class="ct"><span class="dot ${c.state==="running"?"active":"standby"}"></span>${c.name}</span>`).join("");
+      `<span class="ct"><span class="dot ${c.state==="running"?"active":"standby"}"></span>${c.name}${c.update?'<span class="upd" title="update available">⬆</span>':''}</span>`).join("");
   } catch(e) {
     document.body.classList.add("stale");
     $("#updated").textContent = "reconnecting…";

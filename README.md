@@ -14,7 +14,9 @@ one auto-refreshing page. No history, no database, no agents, no hub — it read
 - **Network** — live LAN in/out; Tailscale shown separately when present.
 - **Temps & fans** — every motherboard/chipset/NIC sensor hwmon exposes
   (bogus readings filtered), fan RPMs, optional LSI/Broadcom HBA temperature.
-- **Containers** — the whole Docker fleet with running/stopped dots.
+- **Containers** — the whole Docker fleet with running/stopped dots, plus
+  optional "update available" badges fed by [Diun](https://crazymax.dev/diun/)
+  (see below).
 
 ### Design choices
 
@@ -79,6 +81,25 @@ Panel's config dir, registered with smartd via
 `-m <nomailer> -M exec /usr/local/bin/panel-smart-alert` in its DEFAULT
 directives. Dismissing the banner stores a watermark; only warnings newer than
 the last dismissal are shown, so new problems always re-trigger.
+
+### Update badges via Diun (optional)
+
+Panel never talks to registries itself — that stays true. Instead, run
+[Diun](https://crazymax.dev/diun/) and point its webhook notifier at Panel:
+
+```yaml
+environment:
+  - DIUN_PROVIDERS_DOCKER=true
+  - DIUN_PROVIDERS_DOCKER_WATCHBYDEFAULT=true
+  - DIUN_NOTIF_WEBHOOK_ENDPOINT=http://<panel-host>:8763/api/updates/diun
+  - DIUN_NOTIF_WEBHOOK_METHOD=POST
+```
+
+When Diun reports a newer image, the matching containers get an orange ⬆ in
+the Containers panel. Panel records which image IDs were current at that
+moment, so the badge clears itself as soon as the container is recreated on
+the new image — nothing to acknowledge. State lives in `updates.json` in the
+config dir.
 
 ### storcli note
 

@@ -331,6 +331,20 @@ def smart_alerts(ack_ts):
     return out[:20]
 
 
+def norm_image(ref):
+    """Normalize an image reference so Diun's fully-qualified names
+    (docker.io/library/nginx:latest) compare equal to Docker's short
+    forms (nginx)."""
+    ref = ref.split("@", 1)[0]
+    for prefix in ("docker.io/library/", "docker.io/", "library/"):
+        if ref.startswith(prefix):
+            ref = ref[len(prefix):]
+            break
+    if ":" not in ref.rsplit("/", 1)[-1]:
+        ref += ":latest"
+    return ref
+
+
 def docker_ps():
     try:
         s = socket.socket(socket.AF_UNIX)
@@ -347,7 +361,8 @@ def docker_ps():
         data = json.loads(buf.split(b"\r\n\r\n", 1)[1])
         return sorted(
             [{"name": c["Names"][0].lstrip("/"), "state": c["State"],
-              "id": c["Id"][:12]} for c in data],
+              "id": c["Id"][:12], "image": norm_image(c.get("Image", "")),
+              "image_id": c.get("ImageID", "")} for c in data],
             key=lambda x: (x["state"] != "running", x["name"]))
     except Exception:
         return []

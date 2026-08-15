@@ -29,6 +29,55 @@ _last_io = {}
 _START = time.time()
 _IOSTATE = os.path.join(config.CONFIG_DIR, "iostate.json")
 
+# Update badges: Diun (or anything else) POSTs to /api/updates/diun when a
+# newer image is published. We remember which image IDs were current at that
+# moment; a container still running one of them shows an "update available"
+# badge, and the entry clears itself once every container has moved off the
+# old image — no manual acknowledging, and Panel never talks to registries.
+_UPDATES_FILE = os.path.join(config.CONFIG_DIR, "updates.json")
+_updates = {}
+_upd_lock = threading.Lock()
+
+
+def _load_updates():
+    global _updates
+    try:
+        import json
+        _updates = json.load(open(_UPDATES_FILE))
+    except Exception:
+        _updates = {}
+
+
+def _save_updates():
+    try:
+        import json
+        tmp = _UPDATES_FILE + ".tmp"
+        json.dump(_updates, open(tmp, "w"), indent=2)
+        os.replace(tmp, _UPDATES_FILE)
+    except Exception:
+        pass
+
+
+def annotate_updates(containers):
+    """Set c["update"] on each container; prune entries nothing matches."""
+    with _upd_lock:
+        stale = []
+        for image, e in _updates.items():
+            hit = False
+            for c in containers:
+                if c["image"] == image and c["image_id"] in e["old_ids"]:
+                    c["update"] = True
+                    hit = True
+            if not hit:
+                stale.append(image)
+        for image in stale:
+            del _updates[image]
+        if stale:
+            _save_updates()
+    for c in containers:
+        c.setdefault("update", False)
+    return containers
+
 
 def _load_iostate():
     """Restore last-I/O times (keyed by serial) so restarts don't reset the
@@ -189,7 +238,7 @@ def sampler():
         cpu_pct = round(100 * (1 - (ci - pi) / max(1, ct - pt)), 1)
         mt, mu = C.read_mem()
         hw_temps, hw_fans = C.read_hwmon()
-        containers = C.docker_ps()
+        containers = annotate_updates(C.docker_ps())
         gpu = C.gpu_stats()
         if gpu:
             gpu["procs"] = C.gpu_procs(containers)
@@ -235,6 +284,27 @@ def get_settings():
     return jsonify(s)
 
 
+@app.route("/api/updates/diun", methods=["POST"])
+def diun_webhook():
+    """Diun webhook notifier target. Payload has at least {image, digest};
+    we baseline the image IDs currently in use so the badge can self-clear."""
+    data = request.get_json(force=True, silent=True) or {}
+    raw = str(data.get("image", "")).strip()
+    if not raw:
+        return jsonify({"ok": False, "error": "no image in payload"}), 400
+    image = C.norm_image(raw)
+    old_ids = sorted({c["image_id"] for c in C.docker_ps()
+                      if c["image"] == image and c["image_id"]})
+    if not old_ids:
+        # no container uses this image (anymore) — nothing to badge
+        return jsonify({"ok": True, "matched": False})
+    with _upd_lock:
+        _updates[image] = {"digest": data.get("digest", ""),
+                           "ts": int(time.time()), "old_ids": old_ids}
+        _save_updates()
+    return jsonify({"ok": True, "matched": True})
+
+
 @app.route("/api/alerts/ack", methods=["POST"])
 def ack_alerts():
     config.save({"alerts_ack": time.time()})
@@ -261,6 +331,7 @@ def index():
 
 if __name__ == "__main__":
     _last_hit[0] = time.time()  # sample immediately on startup
+    _load_updates()
     threading.Thread(target=io_tracker, daemon=True).start()
     threading.Thread(target=sampler, daemon=True).start()
     app.run(host="0.0.0.0", port=config.PORT, threaded=True)
