@@ -58,7 +58,7 @@ def load():
     """(Re)compute effective config: env defaults overlaid with settings.json."""
     global PORT, INTERVAL, TITLE, IDLE_PAUSE, IDLE_WINDOW, DISK_LABELS, \
         HIDE_DISKS, POOLS, NET_LAN_REGEX, STORCLI, SPIN_EVERY, LSI_EVERY, \
-        HOSTROOT, SHOW_GRAPHS, SPIN_AFTER, ALERTS_ACK
+        HOSTROOT, SHOW_GRAPHS, SPIN_AFTER, ALERTS_ACK, UPDATE_ALLOW, BACKUP_OWNER
 
     env = os.environ.get
     PORT = int(env("PANEL_PORT", "8763"))          # env-only (needs restart anyway)
@@ -77,6 +77,10 @@ def load():
     SPIN_AFTER = float(env("PANEL_SPIN_AFTER", "1800"))
     ALERTS_ACK = 0.0
     LSI_EVERY = float(env("PANEL_LSI_EVERY", "60"))
+    # containers offered for one-click update (standalone ones only)
+    UPDATE_ALLOW = [s.strip() for s in env("PANEL_UPDATE_ALLOW", "").split(",") if s.strip()]
+    # "uid:gid" to own backup files (e.g. to match an NFS/SMB share); empty = leave as root
+    BACKUP_OWNER = env("PANEL_BACKUP_OWNER", "")
 
     STORCLI = env("PANEL_STORCLI", "")
     if not STORCLI:  # auto-detect a mounted-in binary
@@ -104,13 +108,17 @@ def load():
         HIDE_DISKS = set(s["hide_disks"])
     if s.get("storcli"):
         STORCLI = s["storcli"]
+    if "update_allow" in s:
+        UPDATE_ALLOW = [str(x) for x in s["update_allow"]]
+    if "backup_owner" in s:
+        BACKUP_OWNER = str(s["backup_owner"]).strip()
 
 
 def save(new):
     """Merge into settings.json and re-apply. Only known keys are stored."""
     allowed = {"title", "interval", "idle_pause", "idle_window",
                "disk_labels", "hide_disks", "storcli", "show_graphs",
-               "spin_after", "alerts_ack"}
+               "spin_after", "alerts_ack", "update_allow", "backup_owner"}
     with _write_lock:
         s = _settings_from_file()
         for k, v in new.items():
@@ -132,6 +140,7 @@ def current():
         "show_graphs": SHOW_GRAPHS, "spin_after": SPIN_AFTER,
         "disk_labels": dict(DISK_LABELS), "hide_disks": sorted(HIDE_DISKS),
         "storcli": STORCLI,
+        "update_allow": list(UPDATE_ALLOW), "backup_owner": BACKUP_OWNER,
         "writable": os.access(CONFIG_DIR, os.W_OK) if os.path.isdir(CONFIG_DIR)
                     else os.access(os.path.dirname(CONFIG_DIR) or "/", os.W_OK),
     }

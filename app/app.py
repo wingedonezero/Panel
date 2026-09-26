@@ -11,8 +11,11 @@ import time
 
 from flask import Flask, jsonify, request, send_file
 
+import backups as B
 import collectors as C
 import config
+import jobs as J
+import updater as U
 
 app = Flask(__name__)
 STATS = {}
@@ -257,6 +260,7 @@ def sampler():
                 "gpu": gpu, "lsi_temp": lsi,
                 "temps": hw_temps, "fans": hw_fans,
                 "containers": containers,
+                "updatable": list(config.UPDATE_ALLOW),
             })
         prev_ds, prev_net, prev_cpu = ds, net, cpu
 
@@ -324,12 +328,108 @@ def post_settings():
     return jsonify({"ok": True, "settings": config.current()})
 
 
+# ---------------------------------------------------------------- jobs
+
+@app.route("/api/jobs/<jid>")
+def job_view(jid):
+    j = J.get(jid)
+    if not j:
+        return jsonify({"ok": False, "error": "no such job"}), 404
+    return jsonify(j.view(int(request.args.get("since", 0))))
+
+
+# ---------------------------------------------------------------- backups
+
+@app.route("/api/backups")
+def backups_overview():
+    data = B.overview()
+    for row in data["jobs"]:
+        for kind in row["kinds"]:
+            j = J.latest(f"backup:{row['id']}:{kind}")
+            row["kinds"][kind]["job"] = ({"id": j.id, "state": j.state} if j else None)
+    return jsonify(data)
+
+
+@app.route("/api/backups/jobs", methods=["POST"])
+def backups_save():
+    job, err = B.save_job(request.get_json(force=True, silent=True) or {})
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    return jsonify({"ok": True, "job": job})
+
+
+@app.route("/api/backups/jobs/<jid>", methods=["DELETE"])
+def backups_delete(jid):
+    B.delete_job(jid)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/backups/run/<jid>/<kind>", methods=["POST"])
+def backups_run(jid, kind):
+    spec = B.find_job(jid)
+    if not spec or kind not in ("db", "full"):
+        return jsonify({"ok": False, "error": "unknown job or kind"}), 404
+    job, started = J.start(f"backup:{jid}:{kind}",
+                           f"{spec['name']} — {kind.upper()} backup", B.run, jid, kind)
+    return jsonify({"ok": True, "job": job.id, "started": started})
+
+
+# ---------------------------------------------------------------- updater
+
+@app.route("/api/update/containers")
+def update_containers():
+    upd = {c["name"]: c["update"] for c in annotate_updates(C.docker_ps())}
+    out = []
+    for c in U.candidates():
+        j = J.latest(f"update:{c['name']}")
+        out.append({**c, "allowed": U.allowed(c["name"]),
+                    "update": upd.get(c["name"], False),
+                    "job": ({"id": j.id, "state": j.state, "result": j.result,
+                             "ended": j.ended} if j else None)})
+    return jsonify({"containers": out})
+
+
+@app.route("/api/update/<name>/plan")
+def update_plan(name):
+    if not U.allowed(name):
+        return jsonify({"ok": False, "error": "not enabled for one-click update"}), 403
+    try:
+        return jsonify({"ok": True, **U.plan(name)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/update/<name>", methods=["POST"])
+def update_run(name):
+    if not U.allowed(name):
+        return jsonify({"ok": False, "error": "not enabled for one-click update"}), 403
+    force = bool((request.get_json(force=True, silent=True) or {}).get("force"))
+    job, started = J.start(f"update:{name}", f"Update {name}", U.run, name, force)
+    return jsonify({"ok": True, "job": job.id, "started": started})
+
+
 @app.route("/")
 def index():
     return send_file(os.path.join(os.path.dirname(__file__), "static", "index.html"))
 
 
+def _host_timezone():
+    """Use the host's timezone (for backup file names) unless TZ is set."""
+    if os.environ.get("TZ"):
+        return
+    try:
+        tz = open(os.path.join(config.HOSTROOT, "etc/timezone")).read().strip()
+        if tz:
+            os.environ["TZ"] = tz
+    except OSError:
+        lt = os.path.join(config.HOSTROOT, "etc/localtime")
+        if os.path.exists(lt):
+            os.environ["TZ"] = ":" + lt
+    time.tzset()
+
+
 if __name__ == "__main__":
+    _host_timezone()
     _last_hit[0] = time.time()  # sample immediately on startup
     _load_updates()
     threading.Thread(target=io_tracker, daemon=True).start()

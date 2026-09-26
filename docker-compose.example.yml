@@ -30,4 +30,5 @@ services:
       - /dev:/dev
       - /srv:/srv:ro                # so data-disk mountpoints resolve for usage bars
       - /:/hostroot:ro              # fallback for mounts outside /srv (incl. root fs)
+      # - /path/to/backups:/backups   # Backups tab destination (the only writable data mount)
       # - /path/to/storcli-bin:/config/bin:ro       # if using PANEL_STORCLI

@@ -65,13 +65,61 @@
   .btn.save { background:var(--green); color:#10240a; font-weight:600; }
   .btn.cancel { background:var(--row); color:var(--text); }
   .savemsg { font-size:12px; color:var(--dim); align-self:center; margin-right:auto; }
+  /* ---- tabs / backups / updater ---- */
+  .tbtns { display:flex; gap:8px; }
+  .tabs { display:flex; gap:4px; margin:-6px 0 14px; border-bottom:1px solid var(--bar); }
+  .tabs a { color:var(--dim); font-size:12px; text-transform:uppercase; letter-spacing:1px; padding:6px 12px; cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-1px; user-select:none; }
+  .tabs a:hover { color:var(--text); }
+  .tabs a.on { color:var(--text); border-bottom-color:var(--accent); }
+  .modal { position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; align-items:flex-start; justify-content:center; padding:40px 16px; overflow:auto; z-index:10; }
+  .modal.open { display:flex; }
+  .sheet.wide { max-width:860px; }
+  .frow select, .frow textarea { background:var(--row); border:1px solid var(--bar); color:var(--text); border-radius:6px; padding:5px 8px; font-size:13px; width:280px; font-family:inherit; }
+  .frow input.w { width:280px; }
+  .hint { font-size:12px; color:var(--dim); margin:2px 0 6px; }
+  .btn.act { background:var(--row); color:var(--text); border:1px solid var(--bar); padding:4px 10px; font-size:12px; }
+  .btn.act:hover { border-color:var(--dim); }
+  .btn.act:disabled { opacity:.5; cursor:default; }
+  .btn.danger { background:#5a1f24; color:#ffb3b3; }
+  .btn.go { background:var(--orange); color:#2a1400; font-weight:600; }
+  .bkhead { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; gap:10px; flex-wrap:wrap; }
+  .bkhead h2 { margin:0; }
+  .muted { color:var(--dim); font-size:12px; }
+  .warn { color:var(--orange); font-size:12px; }
+  .bad { color:#ff6b6b; }
+  td .small { font-size:11px; color:var(--dim); display:block; }
+  .kind { white-space:nowrap; }
+  .kind b { font-weight:600; }
+  .link { color:#6cb6ff; cursor:pointer; font-size:11px; }
+  .log { background:#141319; border-radius:6px; padding:10px 12px; font:12px/1.5 ui-monospace,Menlo,Consolas,monospace; max-height:60vh; overflow:auto; white-space:pre-wrap; word-break:break-all; }
+  .log .step { color:var(--text); font-weight:700; margin-top:6px; }
+  .log .cmd { color:#6cb6ff; }
+  .log .out { color:#b8b8c0; }
+  .log .info { color:var(--dim); }
+  .log .err { color:#ff6b6b; }
+  .log .ts { color:#55545e; margin-right:8px; }
+  .state { display:inline-block; font-size:11px; border-radius:10px; padding:1px 9px; text-transform:uppercase; letter-spacing:.5px; }
+  .state.running { background:#1d3a57; color:#9cc9ff; }
+  .state.ok { background:#1f3a14; color:#8fe06a; }
+  .state.noop { background:var(--row); color:var(--dim); }
+  .state.error { background:#4a1c20; color:#ff8a8a; }
+  .steps td { font-size:12px; vertical-align:top; }
+  .steps code { font:11.5px ui-monospace,Menlo,Consolas,monospace; color:#6cb6ff; }
+  .steps .api { color:var(--dim); }
+  details.json summary { cursor:pointer; color:var(--dim); font-size:12px; margin:10px 0 6px; }
+  .ucard .small { display:block; font-size:11px; color:var(--dim); margin-top:2px; }
+  .ucard { display:flex; justify-content:space-between; align-items:center; background:var(--row); border-radius:6px; padding:8px 12px; margin-bottom:6px; gap:10px; }
 </style>
 </head>
 <body>
 <div class="topbar">
   <div><h1 id="title"><b>panel</b></h1><div class="sub" id="updated">connecting…</div></div>
-  <button class="gear" id="gearBtn" title="Settings">⚙</button>
+  <div class="tbtns">
+    <button class="gear hidden" id="updBtn" title="Container updates">⬆</button>
+    <button class="gear" id="gearBtn" title="Settings">⚙</button>
+  </div>
 </div>
+<nav class="tabs"><a data-tab="status" class="on">Status</a><a data-tab="backups">Backups</a></nav>
 
 <div id="settings"><div class="sheet">
   <h2>Settings</h2>
@@ -84,6 +132,10 @@
   <div class="frow"><span>Assume disk asleep after idle (seconds)</span><input type="number" id="sSpinAfter" min="60" step="60"></div>
   <h3>Disks — labels &amp; visibility <span style="text-transform:none;letter-spacing:0">(new disks appear automatically; labels are cosmetic)</span></h3>
   <table class="dtable" id="sDisks"><thead><tr><th>Serial</th><th>Label</th><th>Hide</th></tr></thead><tbody></tbody></table>
+  <h3>Backups</h3>
+  <div class="frow"><span>Owner of backup files (uid:gid, empty = root)</span><input type="text" id="sBkOwner" placeholder="e.g. 1000:1000"></div>
+  <h3>One-click update <span style="text-transform:none;letter-spacing:0">(standalone containers only — stack containers update from their stack)</span></h3>
+  <div id="sUpd" class="hint"></div>
   <div class="btns">
     <span class="savemsg" id="saveMsg"></span>
     <button class="btn cancel" id="btnCancel">Cancel</button>
@@ -91,6 +143,64 @@
   </div>
 </div></div>
 
+<!-- backup job editor -->
+<div id="bkEdit" class="modal"><div class="sheet">
+  <h2 id="bkEditTitle">Add backup</h2>
+  <div class="frow"><span>Type</span><select id="bPreset"></select></div>
+  <div class="hint" id="bHint"></div>
+  <div class="frow"><span>Name</span><input type="text" class="w" id="bName" placeholder="e.g. My App"></div>
+  <div class="frow"><span>Data folder (host path)</span><input type="text" class="w" id="bSource" placeholder="/path/to/appdata/app"></div>
+  <div class="frow" id="bDbRow"><span>Database file (inside data folder)</span><input type="text" class="w" id="bDb" placeholder="db.sqlite3"></div>
+  <div class="frow"><span>Full backup includes (comma separated, * = all)</span><input type="text" class="w" id="bInclude"></div>
+  <div class="frow"><span>Destination (inside <code id="bRoot">/backups</code>)</span><input type="text" class="w" id="bDest" placeholder="App Backups/My App"></div>
+  <div class="frow"><span>Keep newest (per type)</span><input type="number" id="bKeep" min="1" step="1"></div>
+  <div class="btns">
+    <span class="savemsg" id="bMsg"></span>
+    <button class="btn danger hidden" id="bDelete">Remove job</button>
+    <button class="btn cancel" id="bCancel">Cancel</button>
+    <button class="btn save" id="bSave">Save</button>
+  </div>
+</div></div>
+
+<!-- job log viewer (backups + updates) -->
+<div id="logModal" class="modal"><div class="sheet wide">
+  <h2><span id="logTitle"></span> <span class="state" id="logState"></span></h2>
+  <div class="log" id="logBody"></div>
+  <div class="btns"><span class="savemsg" id="logResult"></span><button class="btn cancel" id="logClose">Close</button></div>
+</div></div>
+
+<!-- container updater -->
+<div id="updModal" class="modal"><div class="sheet wide">
+  <h2 id="updTitle">Container updates</h2>
+  <div id="updList"></div>
+  <div id="updPlan" class="hidden">
+    <div class="hint" id="updPlanInfo"></div>
+    <table class="steps"><thead><tr><th>#</th><th>Step</th><th>Command / Docker API call</th></tr></thead><tbody id="updSteps"></tbody></table>
+    <details class="json"><summary>Full container config that will be created</summary><div class="log" id="updBody"></div></details>
+    <div class="hint" id="updRollback"></div>
+    <div class="frow"><span>Recreate even if the image is already up to date</span><input type="checkbox" id="updForce"></div>
+  </div>
+  <div id="updLog" class="hidden"><div class="log" id="updLogBody"></div></div>
+  <div class="btns">
+    <span class="savemsg" id="updMsg"></span>
+    <button class="btn cancel" id="updBack">Back</button>
+    <button class="btn cancel" id="updClose">Close</button>
+    <button class="btn go hidden" id="updRun">Run update</button>
+  </div>
+</div></div>
+
+<div id="tab-backups" class="hidden">
+  <div class="panel">
+    <div class="bkhead"><h2>App backups</h2>
+      <div><span id="bkRoot" class="muted"></span> <button class="btn act" id="bkAdd">+ Add backup</button></div></div>
+    <table id="bkTable"><thead><tr>
+      <th>Job</th><th>Database</th><th>Full</th><th></th>
+    </tr></thead><tbody></tbody></table>
+    <div id="bkEmpty" class="muted hidden" style="padding:6px 2px">No backup jobs yet — use “+ Add backup”.</div>
+  </div>
+</div>
+
+<div id="tab-status">
 <div id="alerts" class="hidden">
   <button id="alertDismiss">Dismiss</button>
   <h2>SMART Warnings</h2>
@@ -119,9 +229,12 @@
 </div>
 
 <div class="panel"><h2>Containers</h2><div class="cts" id="cts"></div></div>
+</div>
 
 <script>
 const $ = s => document.querySelector(s);
+const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let curTab = "status";
 const fmtB = n => { if(!n) return "0"; const u=["B","KB","MB","GB","TB"]; let i=0; while(n>=1024&&i<4){n/=1024;i++} return n.toFixed(n>=100?0:1)+" "+u[i]; };
 const fmtS = n => n < 51200 ? "" : fmtB(n)+"/s";   // treat sub-50KB/s as idle noise
 let titled = false;
@@ -235,6 +348,7 @@ async function tick() {
     if (al.length) $("#alertList").innerHTML = al.map(a =>
       `<div class="alert"><span>${new Date(a.ts*1000).toLocaleString()}</span>${a.text}</div>`).join("");
 
+    $("#updBtn").classList.toggle("hidden", !(d.updatable && d.updatable.length));
     $("#cts").innerHTML = d.containers.map(c =>
       `<span class="ct"><span class="dot ${c.state==="running"?"active":"standby"}"></span>${c.name}${c.update?'<span class="upd" title="update available">⬆</span>':''}</span>`).join("");
   } catch(e) {
@@ -245,11 +359,11 @@ async function tick() {
 let pollMs = 2000, timer = null;
 function loop() {
   timer = setTimeout(async () => {
-    if (!document.hidden) await tick();   // hidden tab -> no polling -> server idles too
+    if (!document.hidden && curTab === "status") await tick();   // hidden/other tab -> no polling -> server idles too
     loop();
   }, pollMs);
 }
-document.addEventListener("visibilitychange", () => { if (!document.hidden) tick(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden && curTab === "status") tick(); });
 tick(); loop();
 
 // ---- settings ----
@@ -268,6 +382,15 @@ async function openSettings() {
        <td><input type="text" class="dlabel" value="${d.custom?d.label:""}" placeholder="${d.auto||d.serial}"></td>
        <td><input type="checkbox" class="dhide" ${d.hidden?"checked":""}></td>
      </tr>`).join("");
+  sEl("sBkOwner").value = s.backup_owner || "";
+  try {
+    const u = await (await fetch("api/update/containers")).json();
+    const allow = new Set(s.update_allow || []);
+    const opts = u.containers.filter(c => c.standalone && !c.self);
+    sEl("sUpd").innerHTML = opts.length ? opts.map(c =>
+      `<label style="display:inline-block;margin:0 14px 4px 0;color:var(--text)"><input type="checkbox" class="uallow" value="${esc(c.name)}" ${allow.has(c.name)?"checked":""}> ${esc(c.name)}</label>`).join("")
+      : "no standalone containers found";
+  } catch(e) { sEl("sUpd").textContent = "could not list containers"; }
   sEl("saveMsg").textContent = s.writable ? "" : "warning: /config is not writable — mount a volume to persist";
   sEl("settings").classList.add("open");
 }
@@ -287,6 +410,8 @@ async function saveSettings() {
     show_graphs: sEl("sGraphs").checked,
     spin_after: parseFloat(sEl("sSpinAfter").value) || 1800,
     disk_labels: labels, hide_disks: hidden,
+    backup_owner: sEl("sBkOwner").value.trim(),
+    update_allow: [...document.querySelectorAll(".uallow:checked")].map(x => x.value),
   };
   const r = await fetch("api/settings", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
   const res = await r.json();
@@ -298,6 +423,203 @@ sEl("gearBtn").onclick = openSettings;
 sEl("btnCancel").onclick = () => sEl("settings").classList.remove("open");
 sEl("btnSave").onclick = saveSettings;
 sEl("settings").addEventListener("click", e => { if (e.target === sEl("settings")) sEl("settings").classList.remove("open"); });
+
+// ---- tabs ----
+function showTab(t) {
+  curTab = t;
+  document.querySelectorAll(".tabs a").forEach(a => a.classList.toggle("on", a.dataset.tab === t));
+  sEl("tab-status").classList.toggle("hidden", t !== "status");
+  sEl("tab-backups").classList.toggle("hidden", t !== "backups");
+  history.replaceState(null, "", t === "status" ? location.pathname : "#" + t);
+  if (t === "status") tick(); else loadBackups();
+}
+document.querySelectorAll(".tabs a").forEach(a => a.onclick = () => showTab(a.dataset.tab));
+
+// ---- shared helpers ----
+const ago = ts => { const s = Date.now()/1000 - ts; if (s < 90) return "just now";
+  if (s < 5400) return Math.round(s/60) + " min ago"; if (s < 129600) return Math.round(s/3600) + " h ago";
+  return Math.round(s/86400) + " days ago"; };
+const when = ts => new Date(ts*1000).toLocaleString();
+const post = (url, body) => fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body || {})}).then(r => r.json());
+const closeOnBackdrop = id => sEl(id).addEventListener("click", e => { if (e.target === sEl(id)) sEl(id).classList.remove("open"); });
+
+function renderLines(el, lines) {
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  el.insertAdjacentHTML("beforeend", lines.map(([ts, kind, text]) =>
+    `<div class="${kind}"><span class="ts">${new Date(ts*1000).toLocaleTimeString()}</span>${esc(text)}</div>`).join(""));
+  if (atBottom) el.scrollTop = el.scrollHeight;
+}
+// poll a job, streaming new log lines into `el`; resolves with the final view
+async function followJob(jid, el, onState) {
+  let since = 0;
+  while (true) {
+    const v = await (await fetch(`api/jobs/${jid}?since=${since}`)).json();
+    if (v.lines) { renderLines(el, v.lines); since = v.count; }
+    onState && onState(v);
+    if (v.state !== "running") return v;
+    await new Promise(r => setTimeout(r, 700));
+  }
+}
+function setState(el, st) { el.className = "state " + st; el.textContent = st === "noop" ? "no change" : st; }
+
+// ---- backups tab ----
+let bk = null, bkTimer = null;
+async function loadBackups() {
+  clearTimeout(bkTimer);
+  if (curTab !== "backups") return;
+  try { bk = await (await fetch("api/backups")).json(); } catch(e) { return; }
+  const r = bk.root;
+  sEl("bkRoot").innerHTML = !r.exists ? `<span class="warn">backup folder ${esc(r.root)} is not mounted</span>`
+    : !r.writable ? `<span class="warn">${esc(r.root)} is read-only</span>` : "";
+  sEl("bkEmpty").classList.toggle("hidden", bk.jobs.length > 0);
+  let busy = false;
+  sEl("bkTable").querySelector("tbody").innerHTML = bk.jobs.map(j => {
+    const cell = kind => {
+      const k = j.kinds[kind];
+      if (!k) return `<td class="muted">—</td>`;
+      const running = k.job && k.job.state === "running"; busy = busy || running;
+      const last = k.last ? `<b title="${esc(when(k.last.ts))}">${ago(k.last.ts)}</b> · ${fmtB(k.last.size)}` : `<span class="muted">never</span>`;
+      const lr = k.last_run && k.last_run.state === "error"
+        ? `<span class="small bad" title="${esc(k.last_run.result)}">last run failed ${ago(k.last_run.ts)}: ${esc(k.last_run.result).slice(0,80)}</span>` : "";
+      return `<td class="kind">${last}
+        <span class="small">${k.count} kept · ${fmtB(k.total)}${k.job ? ` · <span class="link" data-log="${k.job.id}">log</span>` : ""}</span>${lr}
+        <button class="btn act" style="margin-top:4px" data-run="${esc(j.id)}" data-kind="${kind}" ${running||!r.writable?"disabled":""}>${running?"running…":"Back up now"}</button></td>`;
+    };
+    return `<tr>
+      <td><b>${esc(j.name)}</b>${j.source_ok ? "" : ` <span class="small bad">data folder not found</span>`}
+        <span class="small">${esc(j.source)} → ${esc(j.dest)} · keeps ${j.keep}</span></td>
+      ${cell("db")}${cell("full")}
+      <td style="width:1%"><button class="btn act" data-edit="${esc(j.id)}" title="Edit">✎</button></td></tr>`;
+  }).join("");
+  if (busy) bkTimer = setTimeout(loadBackups, 2000);
+}
+sEl("bkTable").addEventListener("click", async e => {
+  const t = e.target;
+  if (t.dataset.run) {
+    t.disabled = true; t.textContent = "starting…";
+    const res = await post(`api/backups/run/${encodeURIComponent(t.dataset.run)}/${t.dataset.kind}`);
+    if (res.job) openLog(res.job);
+    loadBackups();
+  } else if (t.dataset.edit) editJob(bk.jobs.find(j => j.id === t.dataset.edit));
+  else if (t.dataset.log) openLog(t.dataset.log);
+});
+
+async function openLog(jid) {
+  sEl("logBody").innerHTML = ""; sEl("logResult").textContent = ""; sEl("logTitle").textContent = "";
+  sEl("logModal").classList.add("open");
+  const v = await followJob(jid, sEl("logBody"), v => { sEl("logTitle").textContent = v.title; setState(sEl("logState"), v.state); });
+  sEl("logResult").textContent = v.result || "";
+  loadBackups();
+}
+sEl("logClose").onclick = () => sEl("logModal").classList.remove("open");
+closeOnBackdrop("logModal");
+
+// job editor
+let editing = null;
+function presetChanged(fill) {
+  const p = bk.presets[sEl("bPreset").value];
+  sEl("bHint").textContent = p.hint;
+  sEl("bDbRow").classList.toggle("hidden", sEl("bPreset").value === "folder");
+  if (fill) { sEl("bDb").value = p.db; sEl("bInclude").value = p.include.join(", "); }
+}
+function editJob(j) {
+  editing = j || null;
+  sEl("bkEditTitle").textContent = j ? "Edit backup" : "Add backup";
+  sEl("bPreset").innerHTML = Object.entries(bk.presets).map(([k, p]) => `<option value="${k}">${esc(p.label)}</option>`).join("");
+  sEl("bPreset").value = j ? j.preset : "vaultwarden";
+  presetChanged(!j);
+  sEl("bName").value = j ? j.name : "";
+  sEl("bSource").value = j ? j.source : "";
+  if (j) { sEl("bDb").value = j.db || ""; sEl("bInclude").value = (j.include || ["*"]).join(", "); }
+  sEl("bDest").value = j ? j.dest : "";
+  sEl("bKeep").value = j ? j.keep : 14;
+  sEl("bRoot").textContent = bk.root.root;
+  sEl("bDelete").classList.toggle("hidden", !j);
+  sEl("bMsg").textContent = "";
+  sEl("bkEdit").classList.add("open");
+}
+sEl("bPreset").onchange = () => presetChanged(true);
+sEl("bkAdd").onclick = () => editJob(null);
+sEl("bCancel").onclick = () => sEl("bkEdit").classList.remove("open");
+closeOnBackdrop("bkEdit");
+sEl("bSave").onclick = async () => {
+  const body = { id: editing ? editing.id : undefined, preset: sEl("bPreset").value,
+    name: sEl("bName").value, source: sEl("bSource").value,
+    db: sEl("bPreset").value === "folder" ? "" : sEl("bDb").value,
+    include: sEl("bInclude").value.split(","), dest: sEl("bDest").value,
+    keep: parseInt(sEl("bKeep").value) || 14 };
+  const res = await post("api/backups/jobs", body);
+  if (!res.ok) { sEl("bMsg").textContent = res.error; return; }
+  sEl("bkEdit").classList.remove("open"); loadBackups();
+};
+sEl("bDelete").onclick = async () => {
+  if (!confirm(`Remove the job "${editing.name}"? Existing backup files are kept.`)) return;
+  await fetch(`api/backups/jobs/${encodeURIComponent(editing.id)}`, {method:"DELETE"});
+  sEl("bkEdit").classList.remove("open"); loadBackups();
+};
+
+// ---- updater ----
+let updName = null;
+function updView(v) {   // "list" | "plan" | "log"
+  sEl("updList").classList.toggle("hidden", v !== "list");
+  sEl("updPlan").classList.toggle("hidden", v !== "plan");
+  sEl("updLog").classList.toggle("hidden", v !== "log");
+  sEl("updRun").classList.toggle("hidden", v !== "plan");
+  sEl("updBack").classList.toggle("hidden", v === "list");
+  sEl("updMsg").textContent = "";
+}
+async function openUpdates() {
+  updName = null; updView("list");
+  sEl("updTitle").textContent = "Container updates";
+  sEl("updModal").classList.add("open");
+  sEl("updList").innerHTML = `<div class="muted">loading…</div>`;
+  const d = await (await fetch("api/update/containers")).json();
+  const list = d.containers.filter(c => c.allowed);
+  sEl("updList").innerHTML = list.length ? list.map(c => {
+    const j = c.job;
+    const last = j ? `<span class="small">last run: <span class="state ${j.state}">${j.state==="noop"?"no change":j.state}</span> ${j.ended?ago(j.ended):""} · <span class="link" data-ulog="${j.id}" data-uname="${esc(c.name)}">log</span></span>` : "";
+    return `<div class="ucard"><div><b>${esc(c.name)}</b> <span class="muted">${esc(c.image)} · ${esc(c.state)}</span>
+        ${c.update ? `<span class="upd">⬆ update available</span>` : `<span class="muted"> · no update flagged</span>`}${last}</div>
+      <button class="btn act" data-uplan="${esc(c.name)}" ${j && j.state==="running" ? "disabled" : ""}>${j && j.state==="running" ? "running…" : "Update…"}</button></div>`;
+  }).join("") : `<div class="muted">No containers enabled — tick them under Settings → One-click update.</div>`;
+}
+sEl("updList").addEventListener("click", async e => {
+  const t = e.target;
+  if (t.dataset.uplan) showPlan(t.dataset.uplan);
+  else if (t.dataset.ulog) { updName = t.dataset.uname; watchUpdate(t.dataset.ulog); }
+});
+async function showPlan(name) {
+  updName = name; updView("plan");
+  sEl("updTitle").textContent = `Update ${name}?`;
+  sEl("updSteps").innerHTML = `<tr><td colspan="3" class="muted">building plan…</td></tr>`;
+  const p = await (await fetch(`api/update/${encodeURIComponent(name)}/plan`)).json();
+  if (!p.ok) { sEl("updSteps").innerHTML = `<tr><td colspan="3" class="bad">${esc(p.error)}</td></tr>`; sEl("updRun").classList.add("hidden"); return; }
+  sEl("updPlanInfo").innerHTML = `Image <b>${esc(p.image)}</b> (running ${esc(p.image_id.slice(7,19))}). ` +
+    `Nothing is stopped if the pulled image is the same as the running one. These are the exact steps, with the equivalent <code>docker</code> command and the Docker API call Panel makes:`;
+  sEl("updSteps").innerHTML = p.steps.map((s, i) =>
+    `<tr><td>${i+1}</td><td>${esc(s.what)}</td><td><code>${esc(s.cli)}</code><br><span class="api">${esc(s.api)}</span></td></tr>`).join("");
+  sEl("updBody").textContent = JSON.stringify(p.create_body, null, 2);
+  sEl("updRollback").innerHTML = `If the new container fails to start or stay up: <code>${p.rollback.map(esc).join(" → ")}</code> (the old container is kept until the new one is verified).`;
+  sEl("updForce").checked = false;
+}
+async function watchUpdate(jid) {
+  updView("log");
+  sEl("updLogBody").innerHTML = "";
+  sEl("updTitle").innerHTML = `Updating ${esc(updName)} <span class="state" id="updState"></span>`;
+  const v = await followJob(jid, sEl("updLogBody"), v => setState(sEl("updState"), v.state));
+  sEl("updMsg").textContent = v.result || "";
+}
+sEl("updRun").onclick = async () => {
+  sEl("updRun").classList.add("hidden");
+  const res = await post(`api/update/${encodeURIComponent(updName)}`, {force: sEl("updForce").checked});
+  if (!res.ok) { sEl("updMsg").textContent = res.error; return; }
+  watchUpdate(res.job);
+};
+sEl("updBack").onclick = openUpdates;
+sEl("updClose").onclick = () => sEl("updModal").classList.remove("open");
+sEl("updBtn").onclick = openUpdates;
+
+if (location.hash === "#backups") showTab("backups");
 </script>
 </body>
 </html>
